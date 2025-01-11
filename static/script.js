@@ -1,104 +1,99 @@
-const form = document.getElementById('tone-form');
-const volumeInput = document.getElementById('volume');
-const volumeDisplay = document.getElementById('volume-display');
-const canvas = document.getElementById('progress-bar');
-const ctx = canvas.getContext('2d');
-
-let audioContext = null;
-
-// Update volume display
-volumeInput.addEventListener('input', () => {
-    volumeDisplay.textContent = `${(volumeInput.value * 100).toFixed(0)}%`;
+// Dynamically update volume display
+const volumeSlider = document.getElementById("volume");
+const volumeDisplay = document.getElementById("volume-display");
+volumeSlider.addEventListener("input", () => {
+  volumeDisplay.textContent = Math.round(volumeSlider.value * 100) + "%";
 });
 
-// Handle form submission
-form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-
-    const frequency = parseFloat(document.getElementById('frequency').value);
-    const duration = parseFloat(document.getElementById('duration').value);
-    const volume = parseFloat(volumeInput.value);
-
-    try {
-        // Send the data to the backend for audio generation
-        const response = await fetch('/generate_audio', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ frequency, duration, volume }),
-        });
-
-        // Check if the response is valid
-        if (!response.ok) {
-            throw new Error('Failed to generate audio');
-        }
-
-        const data = await response.json();
-
-        // If the data contains an error, handle it
-        if (data.error) {
-            throw new Error(data.error);
-        }
-
-        // Play the audio with the generated data
-        playAudio(data.audio, data.sample_rate, duration, volume);
-    } catch (error) {
-        console.error('Error:', error);
-        alert('An error occurred while generating audio.');
-    }
+// Dynamically update playback speed display
+const speedSlider = document.getElementById("playback-speed");
+const speedDisplay = document.getElementById("speed-display");
+speedSlider.addEventListener("input", () => {
+  speedDisplay.textContent = speedSlider.value + "x";
 });
 
-// Function to play audio data
-function playAudio(audioData, sampleRate, duration, volume) {
-    // Initialize audio context if it is not yet initialized
-    if (!audioContext) {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+// Handle form submission and play audio
+const form = document.getElementById("tone-form");
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  // Get input values
+  const frequency = parseFloat(document.getElementById("frequency").value);
+  const duration = parseFloat(document.getElementById("duration").value);
+  const volume = parseFloat(volumeSlider.value);
+  const playbackSpeed = parseFloat(speedSlider.value);
+
+  try {
+    const response = await fetch("/generate_audio", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ frequency, duration, volume }),
+    });
+
+    const data = await response.json();
+    if (data.error) {
+      alert(`Error: ${data.error}`);
+      return;
     }
 
-    // Resume the AudioContext if it was previously suspended
-    if (audioContext.state === 'suspended') {
-        audioContext.resume();
-    }
+    // Create AudioBuffer from response
+    const audioContext = new (window.AudioContext ||
+      window.webkitAudioContext)();
+    const audioBuffer = audioContext.createBuffer(
+      1,
+      data.audio.length,
+      data.sample_rate
+    );
+    audioBuffer.getChannelData(0).set(new Float32Array(data.audio));
 
-    // Create an audio buffer from the generated audio data
-    const buffer = audioContext.createBuffer(1, audioData.length, sampleRate);
-    buffer.copyToChannel(new Float32Array(audioData), 0);
-
+    // Play the audio with adjusted playback speed
     const source = audioContext.createBufferSource();
-    source.buffer = buffer;
+    source.buffer = audioBuffer;
+    source.playbackRate.value = playbackSpeed; // Adjust playback speed
+    source.connect(audioContext.destination);
+    source.start(0);
 
-    // Create a gain node and set the volume
-    const gainNode = audioContext.createGain();
-    gainNode.gain.value = volume;
+    // Update progress bar while the audio is playing
+    updateProgressBar(audioContext, audioBuffer.duration);
+  } catch (error) {
+    console.error("Error generating audio:", error);
+  }
+});
 
-    // Connect the audio graph
-    source.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+// Function to update the progress bar (using the canvas)
+// Function to update the progress bar (using the canvas)
+function updateProgressBar(audioContext, duration) {
+  const canvas = document.getElementById("progress-canvas");
+  const context = canvas.getContext("2d");
 
-    // Start playing the audio
-    source.start();
+  // Set the border (box outline) of the progress bar
+  context.lineWidth = 2;
+  context.strokeStyle = "#333"; // Color of the border
+  context.strokeRect(0, 0, canvas.width, canvas.height); // Draw the box outline
 
-    // Display progress bar
-    let startTime = Date.now();
-    const interval = setInterval(() => {
-        const elapsed = (Date.now() - startTime) / 1000;
-        const progress = Math.min((elapsed / duration) * 100, 100);
+  let startTime = audioContext.currentTime;
+  const endTime = startTime + duration;
+  const totalTime = endTime - startTime;
 
-        // Draw the progress bar on the canvas
-        drawProgressBar(progress);
+  // Update progress on the canvas
+  function update() {
+    const currentTime = audioContext.currentTime;
+    const progress = ((currentTime - startTime) / totalTime) * 100;
 
-        // Stop the interval when the audio finishes
-        if (elapsed >= duration) {
-            clearInterval(interval);
-        }
-    }, 50); // Update every 50ms for smoother progress
-}
+    // Update the canvas progress
+    context.clearRect(0, 0, canvas.width, canvas.height); // Clear previous frame
+    context.fillStyle = "#4CAF50"; // Color of the progress bar
+    context.fillRect(0, 0, (canvas.width * progress) / 100, canvas.height);
 
-// Draw progress bar on the canvas
-function drawProgressBar(progress) {
-    // Clear previous progress
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Set the color and fill the progress bar
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, (progress / 100) * canvas.width, canvas.height);
+    // Reapply the border after clearing the canvas
+    context.strokeRect(0, 0, canvas.width, canvas.height); // Draw the box outline again
+
+    if (currentTime < endTime) {
+      requestAnimationFrame(update);
+    }
+  }
+
+  update();
 }
